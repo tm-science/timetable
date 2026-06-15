@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>스마트 시간표 관리 시스템</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+      body { background-color: #f8f9fa; font-family: 'Malgun Gothic', sans-serif; padding: 20px; }
+      .card { border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; border: none; }
+      .card-header { background-color: #ffffff; border-bottom: 2px solid #f0f2f5; font-weight: bold; border-radius: 12px 12px 0 0 !important; }
+      .loader { display: none; border: 4px solid #f3f3f3; border-top: 4px solid #0d6efd; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; margin: 0 auto; }
+      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+      .result-box { white-space: pre-wrap; background: #e9ecef; padding: 15px; border-radius: 8px; font-size: 0.95rem; display: none; }
+      .teacher-checkboxes { max-height: 200px; overflow-y: auto; border: 1px solid #dee2e6; padding: 10px; border-radius: 6px; background: white; }
+      select option:disabled { color: #adb5bd; font-style: italic; }
+    </style>
+  </head>
+  <body>
+    <div class="container" style="max-width: 600px;">
+      <h3 class="text-center mb-3 text-primary fw-bold">⚙️ 스마트 시간표 관리</h3>
+      
+      <div class="d-flex justify-content-end mb-3">
+        <button class="btn btn-outline-primary btn-sm fw-bold" onclick="openSheet()">📊 결과 시트 열기</button>
+      </div>
+
+      <div class="card">
+        <div class="card-header text-success">🔄 교체 가능 수업 찾기</div>
+        <div class="card-body">
+          <div class="row g-2 mb-3">
+            <div class="col-12 mb-2">
+              <label class="form-label text-muted small">대상 교사</label>
+              <select id="swapTeacher" class="form-select"></select>
+            </div>
+            <div class="col-12">
+              <label class="form-label text-muted small">기준 수업 선택 (여러 개 선택 가능)</label>
+              <div id="periodCheckboxes" class="teacher-checkboxes" style="max-height: 150px;">
+                <div class="text-muted small p-2">데이터를 불러오는 중입니다...</div>
+              </div>
+            </div>
+          </div>
+          <div class="d-flex gap-2">
+            <button class="btn btn-success flex-grow-1" onclick="findSwaps()">교체 수업 조회</button>
+            <button class="btn btn-outline-secondary" style="width: 80px;" onclick="resetSwapResult()">초기화</button>
+          </div>
+          <div class="text-center mt-3"><div id="loader1" class="loader"></div></div>
+          <div id="result1" class="result-box mt-3 text-success"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header text-dark">👥 여러 교사 공강 찾기</div>
+        <div class="card-body">
+          <label class="form-label text-muted small">공강을 맞출 교사 선택 (2명 이상)</label>
+          <div id="teacherCheckboxes" class="teacher-checkboxes mb-3"></div>
+          <div class="d-flex gap-2">
+            <button class="btn btn-info text-white flex-grow-1" onclick="findFreeSlots()">공통 공강 조회</button>
+            <button class="btn btn-outline-secondary" style="width: 80px;" onclick="resetFreeResult()">초기화</button>
+          </div>
+          <div class="text-center mt-3"><div id="loader2" class="loader"></div></div>
+          <div id="result2" class="result-box mt-3 text-dark"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // =========================================================
+      // ⭐ 1. 아래 변수에 방금 복사한 구글 웹앱(API) URL을 붙여넣으세요!
+      // =========================================================
+      const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyhUkc7Cwk4ThTEPuxtGqizU8s5woapd3gy8aDEt7ALUOd6CPCz5xK15ccdAvyKbd_log/exec";
+      
+      let appData = null;
+      let sheetUrl = "";
+      let hasActiveColors = false; // 현재 칠해진 색상이 있는지 상태 추적
+
+      // Fetch API 래퍼 함수 (GitHub <-> Google Sheets 통신용)
+      async function callGoogleApi(action, payload = {}) {
+        const url = new URL(GAS_API_URL);
+        url.searchParams.append('action', action);
+        
+        try {
+          const response = await fetch(url.toString(), {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' } 
+          });
+          return await response.json();
+        } catch (error) {
+          console.error('API Error:', error);
+          alert('구글 서버와 통신 중 오류가 발생했습니다.');
+          return { success: false, message: '통신 오류' };
+        }
+      }
+
+      window.onload = async function() {
+        document.getElementById('periodCheckboxes').innerHTML = "<div class='text-muted small p-2'>서버와 연결 중...</div>";
+        const data = await callGoogleApi('getInitialData');
+        populateData(data);
+      };
+
+      function populateData(data) {
+        appData = data;
+        sheetUrl = data.sheetUrl; 
+        
+        const tSelect = document.getElementById('swapTeacher');
+        const tChecks = document.getElementById('teacherCheckboxes');
+
+        tSelect.innerHTML = '<option value="" disabled selected>선택하세요</option>';
+        tChecks.innerHTML = '';
+
+        data.teachers.forEach(t => {
+          tSelect.add(new Option(t.name, t.row));
+          const div = document.createElement('div');
+          div.className = "form-check";
+          div.innerHTML = `<input class="form-check-input t-check" type="checkbox" value="${t.row}" id="chk${t.row}">
+                           <label class="form-check-label" for="chk${t.row}">${t.name}</label>`;
+          tChecks.appendChild(div);
+        });
+
+        tSelect.addEventListener('change', updatePeriodDropdown);
+        updatePeriodDropdown();
+      }
+
+      function updatePeriodDropdown() {
+        const selectedRow = document.getElementById('swapTeacher').value;
+        const pChecks = document.getElementById('periodCheckboxes');
+        pChecks.innerHTML = ""; 
+
+        if (!appData || !selectedRow) {
+          pChecks.innerHTML = "<div class='text-muted small p-2'>교사를 먼저 선택하세요</div>";
+          return;
+        }
+
+        const teacher = appData.teachers.find(t => t.row == parseInt(selectedRow));
+        if (!teacher) return;
+
+        appData.periods.forEach(p => {
+          const cellContent = teacher.schedule[p.col];
+          if (cellContent) {
+            const div = document.createElement('div');
+            div.className = "form-check";
+            div.innerHTML = `<input class="form-check-input p-check" type="checkbox" value="${p.col}" id="pchk${p.col}">
+                             <label class="form-check-label" for="pchk${p.col}">${p.name} <span class="text-primary fw-bold">(${cellContent})</span></label>`;
+            pChecks.appendChild(div);
+          }
+        });
+        
+        if (pChecks.innerHTML === "") {
+          pChecks.innerHTML = "<div class='text-muted small p-2'>배정된 수업이 없습니다.</div>";
+        }
+      }
+
+      function openSheet() {
+        if (sheetUrl) window.open(sheetUrl, '_blank');
+        else alert("시트 주소를 불러오는 중입니다.");
+      }
+
+      async function findSwaps() {
+        const row = document.getElementById('swapTeacher').value;
+        const checks = document.querySelectorAll('.p-check:checked');
+        const selectedCols = Array.from(checks).map(c => c.value);
+        
+        if(!row || selectedCols.length === 0) {
+          alert("대상 교사를 선택하고, 교체할 수업을 1개 이상 체크해주세요.");
+          return;
+        }
+
+        document.getElementById('loader1').style.display = 'block';
+        document.getElementById('result1').style.display = 'none';
+
+        const res = await callGoogleApi('runRecommendSwapsWeb', { targetRow: row, targetCols: selectedCols });
+        
+        document.getElementById('loader1').style.display = 'none';
+        const rBox = document.getElementById('result1');
+        rBox.style.display = 'block';
+        rBox.innerText = res.message;
+        rBox.className = res.success ? "result-box mt-3 bg-success text-white" : "result-box mt-3 bg-warning text-dark";
+        
+        if (res.success) hasActiveColors = true;
+      }
+
+      async function resetSwapResult() {
+        document.getElementById('result1').style.display = 'none';
+        document.getElementById('swapTeacher').value = "";
+        updatePeriodDropdown();
+        await callGoogleApi('runResetColorsWeb');
+        hasActiveColors = false;
+      }
+
+      async function findFreeSlots() {
+        const checks = document.querySelectorAll('.t-check:checked');
+        const selectedRows = Array.from(checks).map(c => c.value);
+        
+        if(selectedRows.length < 2) {
+          alert("2명 이상의 교사를 선택해주세요.");
+          return;
+        }
+
+        document.getElementById('loader2').style.display = 'block';
+        document.getElementById('result2').style.display = 'none';
+
+        const res = await callGoogleApi('runFindCommonFreeWeb', { selectedRows: selectedRows });
+        
+        document.getElementById('loader2').style.display = 'none';
+        const rBox = document.getElementById('result2');
+        rBox.style.display = 'block';
+        rBox.innerText = res.message;
+        rBox.className = res.success ? "result-box mt-3 bg-info text-white" : "result-box mt-3 bg-warning text-dark";
+        
+        if (res.success) hasActiveColors = true;
+      }
+
+      async function resetFreeResult() {
+        document.getElementById('result2').style.display = 'none';
+        document.querySelectorAll('.t-check').forEach(check => check.checked = false);
+        await callGoogleApi('runResetColorsWeb');
+        hasActiveColors = false;
+      }
+
+      // ⭐ [자동 초기화] 웹앱(브라우저) 종료, 탭 닫힘, 새로고침 시 자동으로 초기화 API 호출
+      window.addEventListener('beforeunload', function (e) {
+        if (hasActiveColors) {
+          const url = new URL(GAS_API_URL);
+          url.searchParams.append('action', 'runResetColorsWeb');
+          navigator.sendBeacon(url.toString()); // 페이지 종료 시 안정적인 백그라운드 전송
+        }
+      });
+    </script>
+  </body>
+</html>
