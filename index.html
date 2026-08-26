@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>동명공업고등학교 교사 시간표 &amp; 회의 시간 찾기 시스템</title>
+    <title>동명공고 교사 시간표 시스템</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
       :root { --school-blue: #1554a3; --school-blue-light: #eaf2fc; --free-bg: #eef0f2; --free-text: #6c757d; }
@@ -23,8 +23,11 @@
       .schedule-table { min-width: 520px; margin-bottom: 0; table-layout: fixed; }
       .schedule-table th { background: #f8fafc; color: #4d5968; text-align: center; }
       .schedule-table td { height: 54px; vertical-align: middle; }
-      .schedule-table .period-cell { width: 92px; text-align: center; font-weight: 700; }
-      .schedule-table .time-cell { width: 110px; text-align: center; color: #546170; }
+      
+      /* 교시 셀 및 시간 텍스트 CSS 수정 */
+      .schedule-table .period-cell { width: 100px; text-align: center; font-weight: 700; line-height: 1.3; }
+      .time-text { font-size: 0.75rem; color: #6c757d; font-weight: normal; }
+      
       .class-slot { cursor: pointer; font-weight: 700; transition: background-color .15s, box-shadow .15s; }
       .class-slot:hover { background: var(--school-blue-light); }
       .class-slot.selected { background: #d1e7dd; box-shadow: inset 4px 0 #198754; color: #0f5132; }
@@ -41,7 +44,7 @@
   </head>
   <body>
     <main class="app-container">
-      <h1 class="system-title text-center mb-4 fw-bold">동명공업고등학교 교사 시간표 &amp; 회의 시간 찾기 시스템</h1>
+      <h1 class="system-title text-center mb-4 fw-bold">동명공고 교사 시간표 시스템</h1>
       <div class="d-flex justify-content-end mb-3">
         <button class="btn btn-outline-primary btn-sm fw-bold" type="button" onclick="openSheet()">결과 시트 열기 (새 창)</button>
       </div>
@@ -60,7 +63,8 @@
             <div id="weeklySchedule" class="d-none">
               <ul class="nav weekday-tabs" id="weekdayTabs" role="tablist"></ul>
               <div class="tab-content" id="weekdayPanes"></div>
-              <p class="selected-info mt-3 mb-2" id="selectedClassInfo">교체할 수업을 시간표에서 선택해 주세요.</p>
+              <!-- 여러 개 선택 안내 문구로 변경 -->
+              <p class="selected-info mt-3 mb-2" id="selectedClassInfo">교체할 수업을 시간표에서 선택해 주세요 (여러 개 선택 가능).</p>
             </div>
             <div class="d-flex gap-2 mt-3">
               <button class="btn btn-success flex-grow-1" type="button" onclick="findSwaps()">교체 가능 수업 찾기</button>
@@ -97,7 +101,9 @@
 
       window.appData = null;
       window.sheetUrl = '';
-      window.selectedPeriodCol = null;
+      
+      // 다중 선택을 위해 배열(Array)로 상태를 관리하도록 변경
+      window.selectedPeriodCols = [];
 
       const WEEKDAYS = [
         { key: 'mon', short: '월', long: '월요일' },
@@ -163,8 +169,11 @@
         const selectedRow = Number(document.getElementById('swapTeacher').value);
         const guide = document.getElementById('scheduleGuide');
         const schedule = document.getElementById('weeklySchedule');
-        window.selectedPeriodCol = null;
-        document.getElementById('selectedClassInfo').textContent = '교체할 수업을 시간표에서 선택해 주세요.';
+        
+        // 교사 변경 시 배열 비우기
+        window.selectedPeriodCols = [];
+        document.getElementById('selectedClassInfo').textContent = '교체할 수업을 시간표에서 선택해 주세요 (여러 개 선택 가능).';
+        
         if (!window.appData || !selectedRow) { guide.classList.remove('d-none'); schedule.classList.add('d-none'); return; }
         const teacher = window.appData.teachers.find(function (item) { return item.row === selectedRow; });
         if (!teacher) return;
@@ -206,9 +215,11 @@
           const classText = periodInfo ? teacher.schedule[periodInfo.col] : '';
           const isFree = !classText;
           const attributes = !isFree && periodInfo ? ' class="class-slot" data-col="' + periodInfo.col + '" data-label="' + escapeHtml(day.long + ' ' + period + '교시 ' + classText) + '" tabindex="0" role="button"' : ' class="free-slot"';
-          rows += '<tr><td class="period-cell">' + period + '교시</td><td class="time-cell">' + PERIOD_TIMES[period - 1] + '</td><td' + attributes + '>' + (isFree ? '공강' : escapeHtml(classText)) + '</td></tr>';
+          
+          // 시작 시간을 교시 텍스트 아래에 병합
+          rows += '<tr><td class="period-cell">' + period + '교시<br><span class="time-text">' + PERIOD_TIMES[period - 1] + '</span></td><td' + attributes + '>' + (isFree ? '공강' : escapeHtml(classText)) + '</td></tr>';
         }
-        return '<div class="schedule-wrap"><table class="table table-bordered schedule-table"><thead><tr><th>교시</th><th>시작 시간</th><th>수업</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+        return '<div class="schedule-wrap"><table class="table table-bordered schedule-table"><thead><tr><th style="width: 100px;">교시</th><th>수업</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
       }
 
       function findPeriod(dayName, periodNumber) {
@@ -217,11 +228,23 @@
         return window.appData.periods.find(function (period) { return period.name === expectedName; }) || null;
       }
 
+      // 수업을 여러 개 선택/해제 할 수 있도록 토글 기능(toggle) 적용
       function selectClassSlot(cell) {
-        document.querySelectorAll('.class-slot.selected').forEach(function (item) { item.classList.remove('selected'); });
-        cell.classList.add('selected');
-        window.selectedPeriodCol = Number(cell.dataset.col);
-        document.getElementById('selectedClassInfo').textContent = '선택한 수업: ' + cell.dataset.label;
+        cell.classList.toggle('selected');
+        
+        const selectedCells = document.querySelectorAll('.class-slot.selected');
+        window.selectedPeriodCols = Array.from(selectedCells).map(function(item) {
+          return Number(item.dataset.col);
+        });
+        
+        const infoEl = document.getElementById('selectedClassInfo');
+        if (window.selectedPeriodCols.length === 0) {
+          infoEl.textContent = '교체할 수업을 시간표에서 선택해 주세요 (여러 개 선택 가능).';
+        } else if (window.selectedPeriodCols.length === 1) {
+          infoEl.textContent = '선택한 수업: ' + selectedCells[0].dataset.label;
+        } else {
+          infoEl.textContent = '선택한 수업: 총 ' + window.selectedPeriodCols.length + '개 선택됨';
+        }
       }
 
       function getCurrentWeekDates() {
@@ -239,10 +262,15 @@
 
       function findSwaps() {
         const row = Number(document.getElementById('swapTeacher').value);
-        const col = window.selectedPeriodCol;
-        if (!row || !col) { alert('교사를 선택한 뒤 시간표에서 교체할 수업을 선택해 주세요.'); return; }
+        const cols = window.selectedPeriodCols;
+        
+        // 다중 선택 검사
+        if (!row || cols.length === 0) { alert('교사를 선택한 뒤 시간표에서 교체할 수업을 하나 이상 선택해 주세요.'); return; }
+        
         toggleLoading('loader1', 'result1', true);
-        callAppsScript('runRecommendSwapsWeb', { targetRow: row, targetCols: [col] })
+        
+        // targetCols 파라미터에 배열(cols) 전달
+        callAppsScript('runRecommendSwapsWeb', { targetRow: row, targetCols: cols })
           .then(function (res) { showResult('loader1', 'result1', res, 'success'); })
           .catch(function (error) { showRequestError('loader1', 'result1', error); });
       }
